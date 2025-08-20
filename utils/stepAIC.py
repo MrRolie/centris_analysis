@@ -92,12 +92,10 @@ def step_aic(
     initial: str,
     scope: Optional[Union[str, Dict[str, str]]] = None,
     *,
-    scale: float = 0.0,                 # kept for API parity; unused (AIC already scale-aware via llf)
     direction: str = "both",            # "both", "backward", "forward"
     trace: int = 1,
     keep: Optional[Callable[[object, float], dict]] = None,
     steps: int = 1000,
-    use_start: bool = False,            # kept for API parity; ignored
     k: float = 2.0,
     family=None,                        # e.g., sm.families.Binomial()
     fit_kwargs: Optional[dict] = None,
