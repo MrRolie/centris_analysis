@@ -10,6 +10,58 @@ import numpy as np
 from datetime import datetime
 from sklearn.preprocessing import StandardScaler
 from typing import Optional, Tuple, List
+import os
+import json
+import platform
+
+
+def get_terminal_path_vars() -> dict:
+    """
+    Retrieve path-related variables from the VSCode terminal.integrated.env.* setting,
+    automatically detecting the OS (osx, windows, linux).
+
+    Returns
+    -------
+    dict
+        Dictionary of path-related variables (e.g., PATH, PYTHONPATH) if found, else empty dict.
+    """
+
+    # Detect OS for VSCode setting key
+    system = platform.system().lower()
+    if system == "windows":
+        env_var = "terminal.integrated.env.windows"
+    else:
+        env_var = "terminal.integrated.env.osx"
+
+    # Try to get from environment variable first
+    env_json = os.environ.get(env_var)
+    if env_json:
+        try:
+            env_dict = json.loads(env_json)
+            path_vars = {k: v for k, v in env_dict.items() if "PATH" in k}
+            return path_vars
+        except Exception:
+            pass
+
+    # Try to get from VSCode settings.json if available
+    if system == "windows":
+        settings_path = os.path.expandvars(r"%APPDATA%\Code\User\settings.json")
+    elif system == "darwin":
+        settings_path = os.path.expanduser("~/Library/Application Support/Code/User/settings.json")
+    else:
+        settings_path = os.path.expanduser("~/.config/Code/User/settings.json")
+
+    if os.path.exists(settings_path):
+        try:
+            with open(settings_path, "r") as f:
+                settings = json.load(f)
+            env_dict = settings.get(env_var, {})
+            path_vars = {k: v for k, v in env_dict.items() if "PATH" in k}
+            return path_vars
+        except Exception:
+            pass
+
+    return {}
 
 
 def haversine(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
