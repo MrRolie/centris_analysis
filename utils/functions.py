@@ -8,11 +8,13 @@ for modeling and analysis, including feature engineering and standardization.
 import pandas as pd
 import numpy as np
 from datetime import datetime
+from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
 from sklearn.preprocessing import StandardScaler
-from typing import Optional, Tuple, List
+from typing import Any, Dict, Optional, Tuple, List
 import os
 import json
 import platform
+
 
 
 def get_terminal_path_vars() -> dict:
@@ -312,7 +314,12 @@ def prepare_modeling_variables(
     
     return num_vars, cat_vars, interaction_terms
 
-
+def evaluate(y_true, y_pred):
+    r2 = r2_score(y_true, y_pred)
+    rmse = np.sqrt(mean_squared_error(y_true, y_pred))
+    mae = mean_absolute_error(y_true, y_pred)
+    return {'R2': r2, 'RMSE': rmse, 'MAE': mae}
+    
 def create_formula_scope(
     target_col: str,
     num_vars: List[str], 
@@ -340,3 +347,119 @@ def create_formula_scope(
     """
     all_terms = num_vars + cat_vars + interaction_terms
     return f"{target_col} ~ " + " + ".join(all_terms)
+
+
+def find_discounted_properties(
+    model,
+    data: pd.DataFrame,
+    price_col: str = 'price',
+    feature_cols: Optional[List[str]] = None,
+    discount_threshold: float = -50000,
+    top_n: int = 20
+) -> pd.DataFrame:
+    """
+    Find properties that are priced below the model's prediction (potential bargains).
+    
+    Parameters
+    ----------
+    model : sklearn model
+        Trained regression model with predict() method
+    data : pd.DataFrame
+        Dataset with features and actual prices (must include MLS index or column)
+    price_col : str, default='price'
+        Name of the price column
+    feature_cols : List[str], optional
+        List of feature columns to use for prediction. If None, uses all columns except price_col
+    discount_threshold : float, default=-50000
+        Minimum discount amount (negative value means price < prediction)
+        e.g., -50000 means at least $50k below predicted price
+    top_n : int, default=20
+        Number of top discounted properties to return
+        
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with discounted properties, sorted by discount amount, containing:
+        - All original columns
+        - predicted_price: Model prediction
+        - discount_amount: Actual price - predicted price (negative = discount)
+        - discount_percent: Percentage discount
+        
+    Examples
+    --------
+    >>> discounted = find_discounted_properties(xgb_model, prepared, discount_threshold=-25000, top_n=10)
+    >>> print(f"Found {len(discounted)} properties with at least $25k discount")
+    """
+    # Prepare features
+    if feature_cols is None:
+        feature_cols = [col for col in data.columns if col != price_col]
+    
+    X = data[feature_cols].copy()
+    y_actual = data[price_col].copy()
+    
+    # Make predictions
+    y_pred = model.predict(X)
+    
+    # Calculate discount metrics
+    results = data.copy()
+    results['predicted_price'] = y_pred
+    results['discount_amount'] = y_actual - y_pred
+    results['discount_percent'] = (results['discount_amount'] / y_pred) * 100
+    
+    # Filter for discounted properties (negative discount_amount means actual < predicted)
+    discounted = results[results['discount_amount'] <= discount_threshold].copy()
+    
+    # Sort by biggest discounts (most negative)
+    discounted = discounted.sort_values('discount_amount', ascending=True)
+    
+    # Return top N
+    return discounted.head(top_n)
+
+
+def analyze_market_opportunities(
+    discounted_properties: pd.DataFrame,
+    top_n: int = 5,
+    raw: Optional[pd.DataFrame] = None
+) -> None:
+    """
+    Print a formatted analysis of discounted properties.
+    
+    Parameters
+    ----------
+    discounted_properties : pd.DataFrame
+        DataFrame from find_discounted_properties()
+    top_n : int, default=5
+        Number of top opportunities to display
+    """
+    if discounted_properties.empty:
+        print("No discounted properties found with the specified criteria.")
+        return
+    
+    print(f"\n{'='*80}")
+    print(f"TOP {top_n} MARKET OPPORTUNITIES - Properties Below Predicted Value")
+    print(f"{'='*80}\n")
+    # If raw is provided, merge to get listing_url and address
+    merged = discounted_properties.head(top_n).copy()
+    if raw is not None and 'mls' in raw.columns:
+        merged = merged.reset_index() if 'mls' not in merged.columns else merged
+        merged = merged.merge(raw[['mls', 'listing_url', 'address']], on='mls', how='left')
+        merged = merged.set_index('mls')
+
+    for idx, (mls_or_idx, row) in enumerate(merged.iterrows(), 1):
+        print(f"{idx}. MLS: {mls_or_idx}")
+        if 'listing_url' in row and pd.notnull(row['listing_url']):
+            print(f"   Listing URL: {row['listing_url']}")
+        if 'address' in row and pd.notnull(row['address']):
+            print(f"   Address: {row['address']}")
+        print(f"   Actual Price:    $ {row['price']:<12,.0f}")
+        print(f"   Predicted Price: $ {row['predicted_price']:<12,.0f}")
+        print(f"   Discount:        $ {abs(row['discount_amount']):<12,.0f} ({row['discount_percent']:.1f}%)")
+
+        # Show key property details if available
+        if 'units_count' in row:
+            print(f"   Units: {row['units_count']:.0f}", end="")
+        if 'year_built' in row:
+            print(f" | Built: {row['year_built']:.0f}", end="")
+        if 'lot_area_sqft' in row:
+            print(f" | Lot: {row['lot_area_sqft']:,.0f} sqft", end="")
+        print("\n")
